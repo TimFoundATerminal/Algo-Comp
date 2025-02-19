@@ -32,7 +32,7 @@ def strassens_matrix_mult(a: np.array, b: np.array) -> np.array:
     c22 = M1 - M2 + M3 + M6
 
     # combine the results
-    return np.vstack((np.hstack((c11, c21)), np.hstack((c12, c22))))
+    return np.vstack((np.hstack((c11, c12)), np.hstack((c21, c22))))
 
 def main():
     a = np.array([
