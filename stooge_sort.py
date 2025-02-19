@@ -26,7 +26,7 @@ def stooge_sort(x: np.array) -> np.array:
     return x
 
 # create a swap helper function
-def swap(x: np.array, i: int, j: int) -> np.array:
+def swap(x: np.array, i: int, j: int) -> None:
     """Swap elements i and j in array x"""
     temp = x[i]
     x[i] = x[j]
