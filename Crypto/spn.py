@@ -1,146 +1,137 @@
+from spn_components import SBOX, SubstitutionLayer, PermutationLayer, format_state, key_whitening, Layer
+from random import shuffle
+
+def generate_round_key(master_key, round_num, key_size=16):
+    """Generate a round key for an SPN cipher using the formula 4r-3."""
+    # Calculate the starting bit position using the formula 4r-3 (1-based index)
+    start_pos = (4 * round_num) - 4
+    end_pos = start_pos + key_size
+    # Extract the key bits from the master key
+    return master_key[start_pos:end_pos]
 
 
-def format_state(state: list, group_size=4) -> None:
-    """Display the state in a readable format"""
-    binary_string = ''.join(str(bit) for bit in state)
-    # Add spaces every group_size characters
-    chunks = [binary_string[i:i+group_size] for i in range(0, len(binary_string), group_size)]
-    return ' '.join(chunks)
-
-class SBOX:
-    """SBOX class for SPN cipher"""
-    def __init__(self, table: list=None, bits=4):
-        self.bits = bits
-        self.size = 2**bits
-
-        if table is None:
-            table = [
-                0xC, 0x5, 0x6, 0xB, 0x9, 0x0, 0xA, 0xD,
-                0x3, 0xE, 0xF, 0x8, 0x4, 0x7, 0x1, 0x2
-            ]
-
-        self._validate_table(table)
-
-        self._compute_inverse()
-
-
-    def _validate_table(self, table):
-        """Check if the mapping is valid"""
-        if len(table) != self.size:
-            raise ValueError("Invalid SBOX mapping")
-        
-        if not self._is_bijective(table):
-            raise ValueError("Invalid SBOX mapping")
-        else:
-            self.table = table
-        
-    def _is_bijective(self, table):
-        """Check if the mapping is bijective by having a one to one mapping"""
-        # check the ranges of the table
-        if not all(0 <= i < self.size for i in table):
-            return False
-        
-        # check if the mapping is one to one
-        return len(set(table)) == self.size
-    
-    def _compute_inverse(self) -> None:
-        """Compute the inverse of the SBOX"""
-        self.inverse = [0] * self.size
-        for i, val in enumerate(self.table):
-            self.inverse[val] = i
-
-    def _convert_to_int(self, x: list) -> int:
-        """Convert a binary list to an integer"""
-        return sum([x[i] << i for i in range(self.bits)])
-    
-    def _convert_to_binary(self, x: int) -> list:
-        """Convert an integer to a binary list"""
-        return [x >> i & 1 for i in range(self.bits)]
-
-    def encrypt(self, x: list) -> list:
-        """Encrypt using the SBOX"""
-        x = self._convert_to_int(x)
-        y = self.table[x]
-        return self._convert_to_binary(y)
-    
-    def decrypt(self, x: int) -> int:
-        """Decrypt using the SBOX"""
-        x = self._convert_to_int(x)
-        y = self.inverse[x]
-        return self._convert_to_binary(y)
-
-
-class SubstitutionLayer:
-    def __init__(self, sboxes: list, length: int):
-        """Substitution layer for SPN cipher"""
+class SPN:
+    def __init__(self, length: int=16):
+        """SPN cipher with SBOXes, permutation, and key"""
+        self.layers = []
         self.length = length
+        self.num_rounds = 0
+        self.key_round_function = None
         
-        # check sboxes are all of SBOX class and have the same size
-        sbox_size, sbox_bits = sboxes[0].size, sboxes[0].bits
-        if not all(isinstance(sbox, SBOX) and sbox.size == sbox_size for sbox in sboxes):
-            raise ValueError("Invalid SBOX mapping/size")
-        
-        # check the length of the sboxes is a multiple of the length
-        if self.length != (sbox_bits * len(sboxes)):
-            raise ValueError("Invalid SBOX length")
-        
-        self.sboxes = sboxes
-        self.bits = sbox_bits
+    def add_layer(self, layer):
+        """Add a layer to the SPN"""
+        # Check if the layer is valid
+        if not isinstance(layer, (SubstitutionLayer, PermutationLayer)):
+            raise ValueError("Invalid layer type")
+        # check the layer length
+        if layer.length != self.length:
+            raise ValueError("Invalid layer length")
+        self.layers.append(layer)
 
-    def encrypt(self, state: list) -> list:
-        """Encrypt the state using the SBOXES"""
-        if len(state) != self.length:
-            raise ValueError("Invalid state length")
-        
-        return [sbox.encrypt(state[i:i+self.bits]) for i, sbox in enumerate(self.sboxes)]
+    def add_key_whitening_layer(self):
+        """Add key whitening layer to the SPN"""
+        self.num_rounds += 1
+        self.layers.append(key_whitening)
+
+    def add_key_round_function(self, func: callable):
+        """Add a custom round function to the SPN"""
+        self.key_round_function = func
+
+    def encrypt(self, state: list, master_key: list) -> list:
+        """Encrypt the state using the SPN cipher"""
+        # Check if the master key is valid
+        if len(master_key) < self.length:
+            raise ValueError("Invalid master key length")
+
+        round_num = 1
+        # Apply the SPN layers
+        for layer in self.layers:
+            if isinstance(layer, Layer):
+                # Run state through the layer
+                state = layer.encrypt(state)
+            else: # Assume it's a key whitening function
+                round_key = self.key_round_function(master_key, round_num) # Generate round key
+                state = key_whitening(state, round_key) # Apply key whitening with round key
+                round_num += 1
+
+        return state
     
+    def decrypt(self, state: list, master_key: list) -> list:
+        """Decrypt the state using the SPN cipher"""
+        # Check if the master key is valid
+        if len(master_key) < self.length:
+            raise ValueError("Invalid master key length")
 
-    def decrypt(self, state: list) -> list:
-        """Decrypt the state using the SBOXES"""
-        if len(state) != self.length:
-            raise ValueError("Invalid state length")
-        
-        return [sbox.decrypt(state[i:i+self.bits]) for i, sbox in enumerate(self.sboxes)]
+        round_num = self.num_rounds
+        # Apply the SPN layers in reverse order
+        for layer in reversed(self.layers):
+            if isinstance(layer, Layer):
+                # Run state through the layer
+                state = layer.decrypt(state)
+            else:
+                round_key = self.key_round_function(master_key, round_num)
+                state = key_whitening(state, round_key)
+                round_num -= 1
+
+        return state
 
 
-class PermutationLayer:
-    def __init__(self, perm_map: dict=None):
-        """Permutation layer for SPN cipher"""
-        self.length = len(perm_map)
-        self.permutation = self._validate_perm_map(perm_map)
-        self.inverse_permutation = self._inverse_perm_map()
+def test_round_key_generation():
+    # Test round key generation with 32-bit master key and 16-bit round keys
+    master_key = [0,1,1,0, 1,0,1,0, 1,1,0,0, 0,1,0,1, 1,0,0,1, 0,1,1,0, 1,0,1,0, 1,1,0,0]
+    round_key = generate_round_key(master_key, 1, key_size=16)
+    print(round_key)
+    assert(round_key == [0,1,1,0, 1,0,1,0, 1,1,0,0, 0,1,0,1])
+    round_key = generate_round_key(master_key, 5, key_size=16)
+    assert(round_key == [1,0,0,1, 0,1,1,0, 1,0,1,0, 1,1,0,0])
 
-    def _validate_perm_map(self, perm_map):
-        """Check if the permutation map is valid"""
-        if not all(0 <= i < self.length for i in perm_map.values()):
-            raise ValueError("Invalid permutation map")
-        
-        if len(set(perm_map.keys())) != self.length:
-            raise ValueError("Invalid permutation map")
-        
-        return perm_map
 
-    def _inverse_perm_map(self):
-        """Compute the inverse of the permutation map"""
-        return {v: k for k, v in self.perm_map.items()}
+def test_spn():
+    # Test SPN encryption and decryption
+    # Create an SPN with 16-bit state size
+    spn = SPN(length=16)
+    # Define the round key generation function
+    spn.add_key_round_function(generate_round_key)
     
-    def encrypt(self, state: list) -> list:
-        """Encrypt the state using the permutation map"""
-        if len(state) != self.length:
-            raise ValueError("Invalid state length")
-        
-        # create a list of all zeros
-        return [state[self.permutation(i)] for i in state]
+    # Create an SBOX with 4-bit input size
+    sbox = SBOX(bits=4) # Uses the default SBOX table
+
+    sub_layer = SubstitutionLayer([sbox, sbox, sbox, sbox], length=16)
+
+    target = list(range(16))
+    shuffle(target)
+    perm_map = dict(zip(list(range(16)), target))
+    perm_layer = PermutationLayer(perm_map)
     
-    def decrypt(self, state: list) -> list:
-        """Decrypt the state using the inverse permutation map"""
-        if len(state) != self.length:
-            raise ValueError("Invalid state length")
-        
-        # create a list of all zeros
-        return [state[self.inverse_permutation(i)] for i in state]
+    # Add the various layers to the SPN
+    spn.add_key_whitening_layer()
+    spn.add_layer(sub_layer)
+    spn.add_layer(perm_layer)
 
-        
+    spn.add_key_whitening_layer()
+    spn.add_layer(sub_layer)
+    spn.add_layer(perm_layer)
 
+    spn.add_key_whitening_layer()
+    spn.add_layer(sub_layer)
+    spn.add_layer(perm_layer)
 
-        
+    spn.add_key_whitening_layer()
+    spn.add_layer(sub_layer)
+    spn.add_key_whitening_layer()
+    
+    # Test encryption and decryption
+    plaintext = [1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0]
+    master_key = [0,1,1,0, 1,0,1,0, 1,1,0,0, 0,1,0,1, 1,0,0,1, 0,1,1,0, 1,0,1,0, 1,1,0,0]
+    encrypted = spn.encrypt(plaintext, master_key)
+    decrypted = spn.decrypt(encrypted, master_key)
+    
+    print(format_state(plaintext))
+    print(format_state(encrypted))
+    print(format_state(decrypted))
+    
+    assert(decrypted == plaintext)
+
+if __name__ == "__main__":
+    test_spn()
+    print("All tests passed!")
